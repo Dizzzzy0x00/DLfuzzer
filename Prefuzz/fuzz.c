@@ -212,7 +212,7 @@ void setup_stdio_file(void) {
 /* Count the number of non-255 bytes set in the bitmap. Used strictly for the
    status screen, several calls per second or so. */
 #define FF(_b)  (0xff << ((_b) << 3))
-
+//统计位图中设置为非0字节的数量（未覆盖路径）
 static u32 count_bytes(u8* mem) {
 
     u32* ptr = (u32*)mem;
@@ -234,7 +234,7 @@ static u32 count_bytes(u8* mem) {
     return ret;
 
 }
-
+//统计位图中设置为非255字节的数量（覆盖路径）
 static u32 count_non_255_bytes(u8* mem) {
 
     u32* ptr = (u32*)mem;
@@ -283,7 +283,9 @@ static void handle_stop_sig(int sig) {
    Updates the map, so subsequent calls will always return 0.
    This function is called after every exec() on a fairly large buffer, so
    it needs to be fast. We do this in 32-bit and 64-bit flavors. */
-
+//检查当前执行路径是否给表带来了任何新内容
+//如果仅仅是特定元组的命中计数变化，则返回 1；
+//如果有新的元组出现返回 2 。
 static inline char has_new_bits(char* virgin_map) {
 
 #ifdef __x86_64__
@@ -1162,6 +1164,7 @@ void parse_array(char * str, int * array){
 
 }
 /* parse havoc gradient into array */
+//将 havoc 梯度解析为数组
 void parse_grads_havoc(char * str, double * array, int lenn) {
     int i=0;
     char * token = strtok(str, ",");
@@ -1177,6 +1180,10 @@ void parse_grads_havoc(char * str, double * array, int lenn) {
 
 /* Generate a random number (from 0 to limit - 1). This may
    have slight bias. */
+  //使用random() % limit来生成一个在0到limit-1之间的随机数。
+  //理想情况下，每个数在这个范围内出现的几率应该是相同的，即均匀分布。
+  //然而，random()函数和模数运算符（%）的交互可能会出现稍微的偏离，
+  //导致一些数字比其他数字更可能被选中。
 static inline u32 UR(u32 limit) {
     if (unlikely(!rand_cnt--)) {
         u32 seed[2];
@@ -1189,6 +1196,7 @@ static inline u32 UR(u32 limit) {
 
 /* Helper to choose random block len for block operations in fuzz_one().
    Doesn't return zero, provided that max_len is > 0. */
+//帮助程序为 fuzz_one() 中的块操作选择随机块长度。
 static u32 choose_block_len(u32 limit) {
 
     u32 min_value, max_value;
@@ -1210,7 +1218,7 @@ static u32 choose_block_len(u32 limit) {
     return min_value + (UR(MIN(max_value, limit) - min_value + 1));
 }
 
-
+//在Neuzz中这一部分没有封装为一个函数，阅读Neuzz源码时觉得这一部分代码确实冗余
 void save_if_interesting(char* out_buf, size_t length, char* out_dir) {
     /* run target and check interesting */
     write_to_testcase(out_buf, length);
@@ -1242,6 +1250,7 @@ void save_if_interesting(char* out_buf, size_t length, char* out_dir) {
 }
 
 /* gradient guided mutation */
+//梯度引导变异
 void gen_mutate() {
     /* flip interesting locations within 14 iterations */
     for (int iter = 0; iter < 13; iter = iter + 1) {
@@ -1330,25 +1339,31 @@ void gen_mutate() {
     }
 }
 
+//获取随机havoc的索引
 static u32 rand_frag_idx(u32* grads_avg) {
     u32 grads_sum;
     for (int i = 0; i < FRAGMENT_NUM; i++)
         grads_sum += grads_avg[i];
+    //计算grads_avg梯度和
 
     if (grads_sum == 0)
         return UR(FRAGMENT_NUM);
+        //grads_sum为0则直接返回一个随机索引
 
     u32 rand_grad = UR(grads_sum);
+    //获取一个介于0-grads_sum之间的随机梯度值
     u32 idx;
 
     for (idx = 0; idx < FRAGMENT_NUM; idx++) {
         if (rand_grad <= grads_avg[idx])
             break;
+            //找到梯度值大于rand_grad的第一个索引
         rand_grad -= grads_avg[idx];
+        //没有找到则减去grads_avg[idx]
     }
 
     if (idx == FRAGMENT_NUM)
-        idx = FRAGMENT_NUM - 1;
+        idx = FRAGMENT_NUM - 1;//防止索引越界
 
     return idx;
 }
@@ -1356,6 +1371,7 @@ static u32 rand_frag_idx(u32* grads_avg) {
 
 /* gradient guided havoc stage */
 void afl_grad_havoc_stage(char* seed_name) {
+    //加载种子文件
     /* load the seed entry */
     s32 fd = open(seed_name, O_RDONLY);
     struct stat st;
@@ -1367,6 +1383,7 @@ void afl_grad_havoc_stage(char* seed_name) {
     ck_read(fd, havoc_in_buf, seed_length, seed_name);
     close(fd);
 
+    //计算梯度平均值grads_avg[idx]
     /* calculate the average gradients */
     u32 grads_avg[FRAGMENT_NUM];
     u32 frag_lenn = seed_length / FRAGMENT_NUM;
@@ -1388,6 +1405,8 @@ void afl_grad_havoc_stage(char* seed_name) {
         grads_avg[idx] = grad_temp_sum / frag_lenn;
     }
 
+
+    //开始havoc
     s32 stage_cur, temp_len;
     s32 stage_max = 16 + UR(STAGE_MAX);
 
@@ -1401,25 +1420,29 @@ void afl_grad_havoc_stage(char* seed_name) {
         use_stacking = 1 << (2 + UR(HAVOC_STACK_POW2));
 
         for (idx = 0; idx < use_stacking; idx++) {
-            frag_cur   = rand_frag_idx(grads_avg);
+            frag_cur   = rand_frag_idx(grads_avg);//获取随机havoc索引
             offset     = frag_cur * temp_len / FRAGMENT_NUM;
             mutate_len = temp_len / FRAGMENT_NUM;
             buf_len    = temp_len - offset;
 
             if (mutate_len == 0)
                 mutate_len = buf_len;
-
+            
+            //随机选择一种变异策略进行havoc
             switch (UR(15)) {
                 case 0:
+                    //位翻转
                     FLIP_BIT(havoc_out_buf + offset, UR(mutate_len << 3));
                     break;
 
                 case 1:
+                    //插入interesting number（8bit）
                     havoc_out_buf[offset + UR(mutate_len)] = interesting_8[UR(sizeof(interesting_8))];
                     break;
 
                 case 2:
                     if (mutate_len < 2) break;
+                    //插入interesting number（16bit）
                     if (UR(2)) {
                         *(u16*)(havoc_out_buf + offset + UR(mutate_len - 1)) =
                                 interesting_16[UR(sizeof(interesting_16) >> 1)];
@@ -1431,6 +1454,7 @@ void afl_grad_havoc_stage(char* seed_name) {
 
                 case 3:
                     if (mutate_len < 4) break;
+                    //插入interesting number（32bit）
                     if (UR(2)) {
                         *(u32*)(havoc_out_buf + offset + UR(mutate_len - 3)) =
                                 interesting_32[UR(sizeof(interesting_32) >> 2)];
@@ -1441,10 +1465,12 @@ void afl_grad_havoc_stage(char* seed_name) {
                     break;
 
                 case 4:
+                    //算术减法
                     havoc_out_buf[offset + UR(mutate_len)] -= 1 + UR(ARITH_MAX);
                     break;
 
                 case 5:
+                    //算术加法
                     havoc_out_buf[offset + UR(mutate_len)] += 1 + UR(ARITH_MAX);
                     break;
 
@@ -1581,13 +1607,13 @@ void afl_grad_havoc_stage(char* seed_name) {
 
             }
         }
-
+        //完成havoc以后运行程序测试变异后的种子效果
         /* run target program */
         write_to_testcase(havoc_out_buf, temp_len);
         int fault = run_target(exec_tmout);
         int ret = has_new_bits(virgin_bits);
 
-        if (fault != 0) {
+        if (fault != 0) {//触发crash
             if(fault == FAULT_CRASH) {
                 char* mut_fn = alloc_printf("%s/crash_%d_%06d_havoc", "./crashes", round_cnt, havoc_cnt++);
                 int mut_fd = open(mut_fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
@@ -1596,7 +1622,7 @@ void afl_grad_havoc_stage(char* seed_name) {
                 free(mut_fn);
             }
         }
-        if (ret) {
+        if (ret) {//触发新路径或改变边执行次数
             u8* m_fn;
             if (temp_len > len)
                 m_fn = alloc_printf("%s/id_%d_%06d_havoc_grad", "./havoc_seeds", round_cnt, havoc_cnt++);
@@ -1740,8 +1766,10 @@ void fuzz_lop(int sock) {
 
     time_t tt1 = time(NULL);
     log("currect cnt: %d, gen_mutate start\n", queue_cycle);
+    
+    //这里和neuzz不同，直接发送给python进程训练的信号，也不区分快速阶段和慢速阶段
     send(sock, "train", 5, 0);
-
+    
     /* parse the gradient to guide fuzzing */
     int line_cnt = 0;
     while ((nread = getline(&line, &llen, stream)) != -1) {
@@ -1782,7 +1810,7 @@ void fuzz_lop(int sock) {
     time_t tt2 = time(NULL);
     log("current cnt: %d, gen_mutate finished, starting havoc stage\n", queue_cycle);
     log("gen_mutate use time %fs\n", difftime(tt2, tt1));
-
+    //在梯度指导的变异完成以后开启havoc阶段
     /* afl havoc stage */
     copy_file("gradient_info_havoc_p", "gradient_info_havoc");
     stream = fopen("gradient_info_havoc", "r");
